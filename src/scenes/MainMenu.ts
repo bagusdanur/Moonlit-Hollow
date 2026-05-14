@@ -262,7 +262,7 @@ export class MainMenu extends Phaser.Scene {
       })
       .setOrigin(0.5);
     const body = this.add
-      .text(width / 2, height / 2, 'Game by Kanim\nCode and polish with Codex\nThanks for playing', {
+      .text(width / 2, height / 2, 'Game by RyuDEV\nThanks for playing', {
         fontFamily: 'monospace',
         fontSize: '16px',
         color: '#cfe9ee',
