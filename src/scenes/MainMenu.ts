@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { toggleFullscreen } from '../game/fullscreen';
 import { getContinueLevelId } from '../levels/progress';
 
 export class MainMenu extends Phaser.Scene {
@@ -105,6 +106,7 @@ export class MainMenu extends Phaser.Scene {
     });
 
     this.createMenuPanel(menuX, height);
+    this.createUtilityButton(width - 64, 42, 'FULL', () => toggleFullscreen(this));
     this.createMenuButton(menuX, 278, 'START GAME', () => this.startGame());
     this.createMenuButton(menuX, 346, 'CONTINUE', () => this.continueGame());
     this.createMenuButton(menuX, 414, 'CREDITS', () => this.showCredits());
@@ -156,7 +158,7 @@ export class MainMenu extends Phaser.Scene {
   private continueGame() {
     this.cameras.main.fadeOut(260, 4, 8, 10);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
-      this.scene.start('GameScene', { levelId: getContinueLevelId() });
+      this.scene.start('LoadingScene', { levelId: getContinueLevelId() });
     });
   }
 
@@ -188,8 +190,8 @@ export class MainMenu extends Phaser.Scene {
 
   private createMenuPanel(x: number, height: number) {
     this.add
-      .rectangle(x, height * 0.64, 328, 264, 0x061015, 0.64)
-      .setStrokeStyle(2, 0xbff4ff, 0.28)
+      .rectangle(x, height * 0.64, 328, 264, 0x061015, 0.72)
+      .setStrokeStyle(2, 0xbff4ff, 0.36)
       .setDepth(8);
     this.add.rectangle(x, 212, 238, 2, 0xbff4ff, 0.34).setDepth(9);
     this.add
@@ -208,9 +210,10 @@ export class MainMenu extends Phaser.Scene {
     const shadow = this.add.rectangle(0, 7, 258, 58, 0x020709, 0.62);
     const panel = this.add
       .rectangle(0, 0, 258, 58, 0xbff4ff, 0.96)
-      .setStrokeStyle(3, 0xffffff, 0.9)
+      .setStrokeStyle(2, 0xffffff, 0.82)
       .setInteractive({ useHandCursor: true });
-    const inner = this.add.rectangle(0, 0, 236, 38, 0x0c2a31, 0.1).setStrokeStyle(1, 0x08242b, 0.42);
+    const topLine = this.add.rectangle(0, -18, 220, 2, 0xffffff, 0.38);
+    const inner = this.add.rectangle(0, 0, 236, 38, 0x0c2a31, 0.08).setStrokeStyle(1, 0x08242b, 0.28);
     const text = this.add
       .text(0, 0, label, {
         fontFamily: 'monospace',
@@ -222,7 +225,7 @@ export class MainMenu extends Phaser.Scene {
       .setOrigin(0.5);
 
     panel.on('pointerdown', onClick);
-    const button = this.add.container(x, y, [shadow, panel, inner, text]).setDepth(10);
+    const button = this.add.container(x, y, [shadow, panel, inner, topLine, text]).setDepth(10);
 
     panel.on('pointerover', () => {
       panel.setFillStyle(0xe8fcff, 1);
@@ -242,6 +245,34 @@ export class MainMenu extends Phaser.Scene {
     });
 
     return button;
+  }
+
+  private createUtilityButton(x: number, y: number, label: string, onClick: () => void) {
+    const shadow = this.add.rectangle(0, 4, 78, 40, 0x020709, 0.58).setDepth(10);
+    const panel = this.add
+      .rectangle(0, 0, 78, 40, 0x14262c, 0.9)
+      .setStrokeStyle(2, 0xbff4ff, 0.56)
+      .setInteractive({ useHandCursor: true });
+    const text = this.add
+      .text(0, 0, label, {
+        fontFamily: 'monospace',
+        fontSize: '14px',
+        color: '#eef8ff',
+        stroke: '#05080a',
+        strokeThickness: 4,
+      })
+      .setOrigin(0.5);
+    const button = this.add.container(x, y, [shadow, panel, text]).setDepth(10);
+
+    panel.on('pointerdown', onClick);
+    panel.on('pointerover', () => {
+      panel.setFillStyle(0x1d3b44, 1);
+      button.setScale(1.04);
+    });
+    panel.on('pointerout', () => {
+      panel.setFillStyle(0x14262c, 0.9);
+      button.setScale(1);
+    });
   }
 
   private createCreditsOverlay(width: number, height: number) {

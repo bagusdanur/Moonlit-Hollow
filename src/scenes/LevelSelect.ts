@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { toggleFullscreen } from '../game/fullscreen';
 import { isLevelCompleted, isLevelUnlocked } from '../levels/progress';
 
 const CARD_WIDTH = 246;
@@ -40,6 +41,7 @@ export class LevelSelect extends Phaser.Scene {
 
     this.add.rectangle(width / 2, 145, 360, 2, 0xbff4ff, 0.26);
     this.createBackButton(76, 42);
+    this.createUtilityButton(width - 64, 42, 'FULL', () => toggleFullscreen(this));
     const level1Done = isLevelCompleted('level-1-forest');
     const level2Done = isLevelCompleted('level-2-castle');
     const level2Locked = !isLevelUnlocked('level-2-castle');
@@ -73,29 +75,59 @@ export class LevelSelect extends Phaser.Scene {
   private createBackButton(x: number, y: number) {
     const shadow = this.add.rectangle(0, 4, 112, 40, 0x020709, 0.58);
     const panel = this.add
-      .rectangle(0, 0, 112, 40, 0xdff4ff, 0.96)
-      .setStrokeStyle(2, 0xffffff, 0.88)
+      .rectangle(0, 0, 112, 40, 0x14262c, 0.92)
+      .setStrokeStyle(2, 0xbff4ff, 0.56)
       .setInteractive({ useHandCursor: true });
+    const topLine = this.add.rectangle(0, -12, 82, 2, 0xffffff, 0.16);
     const label = this.add
       .text(0, 0, 'BACK', {
         fontFamily: 'monospace',
         fontSize: '18px',
-        color: '#091114',
-        stroke: '#eaffff',
-        strokeThickness: 2,
+        color: '#eef8ff',
+        stroke: '#05080a',
+        strokeThickness: 4,
       })
       .setOrigin(0.5);
-    const button = this.add.container(x, y, [shadow, panel, label]);
+    const button = this.add.container(x, y, [shadow, panel, topLine, label]);
 
     panel.on('pointerover', () => {
       button.setScale(1.04);
-      panel.setFillStyle(0xffffff, 1);
+      panel.setFillStyle(0x1d3b44, 1);
     });
     panel.on('pointerout', () => {
       button.setScale(1);
-      panel.setFillStyle(0xdff4ff, 0.96);
+      panel.setFillStyle(0x14262c, 0.92);
     });
     panel.on('pointerdown', () => this.scene.start('MainMenu'));
+  }
+
+  private createUtilityButton(x: number, y: number, label: string, onClick: () => void) {
+    const shadow = this.add.rectangle(0, 4, 78, 40, 0x020709, 0.58);
+    const panel = this.add
+      .rectangle(0, 0, 78, 40, 0x14262c, 0.92)
+      .setStrokeStyle(2, 0xbff4ff, 0.56)
+      .setInteractive({ useHandCursor: true });
+    const topLine = this.add.rectangle(0, -12, 52, 2, 0xffffff, 0.16);
+    const labelText = this.add
+      .text(0, 0, label, {
+        fontFamily: 'monospace',
+        fontSize: '14px',
+        color: '#eef8ff',
+        stroke: '#05080a',
+        strokeThickness: 4,
+      })
+      .setOrigin(0.5);
+    const button = this.add.container(x, y, [shadow, panel, topLine, labelText]);
+
+    panel.on('pointerdown', onClick);
+    panel.on('pointerover', () => {
+      button.setScale(1.04);
+      panel.setFillStyle(0x1d3b44, 1);
+    });
+    panel.on('pointerout', () => {
+      button.setScale(1);
+      panel.setFillStyle(0x14262c, 0.92);
+    });
   }
 
   private createLevelCard(
@@ -107,7 +139,7 @@ export class LevelSelect extends Phaser.Scene {
     locked: boolean,
     onClick?: () => void,
   ) {
-    const fill = locked ? 0x111719 : 0x0c252b;
+    const fill = locked ? 0x111719 : 0x061015;
     const stroke = locked ? 0x4b5558 : 0x9fe8ff;
     const labelColor = locked ? '#76858a' : '#eef8ff';
     const statusColor = locked ? '#879397' : '#f5d77d';
@@ -155,7 +187,11 @@ export class LevelSelect extends Phaser.Scene {
         })
         .setOrigin(0.5),
     );
-    container.add(this.add.rectangle(0, 74, 162, 28, locked ? 0x1a2023 : 0xbff4ff, locked ? 0.4 : 0.9));
+    container.add(
+      this.add
+        .rectangle(0, 74, 162, 30, locked ? 0x1a2023 : 0xbff4ff, locked ? 0.4 : 0.94)
+        .setStrokeStyle(1, locked ? 0x4b5558 : 0xffffff, locked ? 0.28 : 0.58),
+    );
     container.add(
       this.add
         .text(0, 74, locked ? 'COMING SOON' : 'PLAY', {
@@ -201,7 +237,7 @@ export class LevelSelect extends Phaser.Scene {
   private startLevel(levelId: string) {
     this.cameras.main.fadeOut(220, 4, 8, 10);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
-      this.scene.start('GameScene', { levelId });
+      this.scene.start('LoadingScene', { levelId });
     });
   }
 }

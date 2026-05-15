@@ -93,6 +93,63 @@ export class BossPresentation {
     this.scene.time.delayedCall(1200, clearTint);
   }
 
+  createBossWarning(name: string) {
+    const overlay = this.scene.add
+      .rectangle(0, 0, 960, 540, 0x050209, 0)
+      .setOrigin(0)
+      .setDepth(64)
+      .setScrollFactor(0);
+    const lineTop = this.scene.add.rectangle(480, 214, 520, 3, 0xff98a9, 0).setDepth(73).setScrollFactor(0);
+    const lineBottom = this.scene.add.rectangle(480, 316, 520, 3, 0x8fd7ff, 0).setDepth(73).setScrollFactor(0);
+    const warning = this.scene.add
+      .text(480, 246, 'BOSS APPROACHING', {
+        fontFamily: 'monospace',
+        fontSize: '34px',
+        color: '#ffdfdf',
+        stroke: '#05080a',
+        strokeThickness: 8,
+      })
+      .setOrigin(0.5)
+      .setAlpha(0)
+      .setDepth(74)
+      .setScrollFactor(0);
+    const bossName = this.scene.add
+      .text(480, 286, name.toUpperCase(), {
+        fontFamily: 'monospace',
+        fontSize: '18px',
+        color: '#bff4ff',
+        stroke: '#05080a',
+        strokeThickness: 5,
+      })
+      .setOrigin(0.5)
+      .setAlpha(0)
+      .setDepth(74)
+      .setScrollFactor(0);
+
+    this.scene.cameras.main.shake(180, 0.0018);
+    this.scene.tweens.add({
+      targets: overlay,
+      alpha: 0.42,
+      duration: 180,
+      yoyo: true,
+      hold: 720,
+      onComplete: () => overlay.destroy(),
+    });
+    this.scene.tweens.add({
+      targets: [lineTop, lineBottom, warning, bossName],
+      alpha: 1,
+      duration: 180,
+      yoyo: true,
+      hold: 760,
+      onComplete: () => {
+        lineTop.destroy();
+        lineBottom.destroy();
+        warning.destroy();
+        bossName.destroy();
+      },
+    });
+  }
+
   createAttackWarning(enemy: BossViewEnemy, direction: 1 | -1) {
     const warning = this.scene.add
       .rectangle(enemy.sprite.x + direction * 34, enemy.sprite.y - 42, 82, 46, 0xff3d7f, 0.24)

@@ -12,6 +12,7 @@ export type EnemyStats = {
   scale: number;
   yOffset: number;
   attackRange: number;
+  attackHeight?: number;
   idleAnim: string;
   runAnim: string;
   attackAnim: string;

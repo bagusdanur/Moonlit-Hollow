@@ -5,32 +5,43 @@ import type { LevelConfig } from '../levels/types';
 type GameHudOptions = {
   level: LevelConfig;
   hasSlashSkill: boolean;
+  showKeyboardHints: boolean;
+};
+
+type EndScreenAction = {
+  label: string;
+  primary?: boolean;
+  onClick: () => void;
 };
 
 export class GameHud {
   private scene: Phaser.Scene;
   private level: LevelConfig;
   private hasSlashSkill: boolean;
+  private showKeyboardHints: boolean;
   private hpBarFill?: Phaser.GameObjects.Rectangle;
   private scoreText?: Phaser.GameObjects.Text;
   private waveText?: Phaser.GameObjects.Text;
   private messageText?: Phaser.GameObjects.Text;
   private centerWaveText?: Phaser.GameObjects.Text;
   private attackCooldownFill?: Phaser.GameObjects.Rectangle;
+  private dashCooldownFill?: Phaser.GameObjects.Rectangle;
   private slashCooldownFill?: Phaser.GameObjects.Rectangle;
   private endOverlay?: Phaser.GameObjects.Rectangle;
+  private endActions?: Phaser.GameObjects.Container;
 
   constructor(scene: Phaser.Scene, options: GameHudOptions) {
     this.scene = scene;
     this.level = options.level;
     this.hasSlashSkill = options.hasSlashSkill;
+    this.showKeyboardHints = options.showKeyboardHints;
   }
 
   create() {
     this.scene.add
-      .rectangle(10, 12, 306, 86, 0x061015, 0.78)
+      .rectangle(10, 12, 306, 86, 0x061015, 0.72)
       .setOrigin(0)
-      .setStrokeStyle(2, 0x8fd7ff, 0.28)
+      .setStrokeStyle(2, 0x8fd7ff, 0.36)
       .setScrollFactor(0)
       .setDepth(49);
     this.scene.add.rectangle(18, 19, 168, 20, 0x080c0f, 0.92).setOrigin(0).setScrollFactor(0).setDepth(50);
@@ -70,24 +81,26 @@ export class GameHud {
       })
       .setScrollFactor(0)
       .setDepth(50);
-    this.scene.add
-      .rectangle(14, 485, 560, 42, 0x061015, 0.58)
+    if (this.showKeyboardHints) {
+      this.scene.add
+      .rectangle(14, 485, 560, 42, 0x061015, 0.62)
       .setOrigin(0)
-      .setStrokeStyle(1, 0x8fd7ff, 0.18)
-      .setScrollFactor(0)
-      .setDepth(49);
-    this.scene.add
-      .text(22, 509, 'Move A/D or arrows   Jump W/Up/Space   Attack J/X   Restart R', {
-        fontFamily: 'monospace',
-        fontSize: '13px',
-        color: '#dbe7ea',
-        stroke: '#05080a',
-        strokeThickness: 4,
-      })
-      .setScrollFactor(0)
-      .setDepth(50);
+        .setStrokeStyle(1, 0x8fd7ff, 0.28)
+        .setScrollFactor(0)
+        .setDepth(49);
+      this.scene.add
+        .text(22, 509, 'Move A/D or arrows   Jump W/Up/Space   Attack J/X   Dash Shift   Restart R', {
+          fontFamily: 'monospace',
+          fontSize: '13px',
+          color: '#dbe7ea',
+          stroke: '#05080a',
+          strokeThickness: 4,
+        })
+        .setScrollFactor(0)
+        .setDepth(50);
+    }
 
-    if (this.hasSlashSkill) {
+    if (this.hasSlashSkill && this.showKeyboardHints) {
       this.scene.add
         .text(22, 490, 'SKILL K READY', {
           fontFamily: 'monospace',
@@ -98,6 +111,9 @@ export class GameHud {
         })
         .setScrollFactor(0)
         .setDepth(50);
+    }
+
+    if (this.hasSlashSkill) {
       this.scene.time.delayedCall(420, () => this.showSkillUnlockBanner());
     }
 
@@ -128,19 +144,36 @@ export class GameHud {
       .setDepth(58);
 
     this.scene.add
-      .rectangle(764, 14, 180, this.hasSlashSkill ? 84 : 44, 0x061015, 0.78)
+      .rectangle(748, 64, 184, this.hasSlashSkill ? 110 : 74, 0x061015, 0.72)
       .setOrigin(0)
-      .setStrokeStyle(2, 0x8fd7ff, 0.26)
+      .setStrokeStyle(2, 0x8fd7ff, 0.36)
       .setScrollFactor(0)
       .setDepth(49);
-    this.scene.add.rectangle(784, 24, 122, 11, 0x0b1114, 0.9).setOrigin(0).setScrollFactor(0).setDepth(51);
+    this.scene.add.rectangle(768, 74, 126, 10, 0x0b1114, 0.9).setOrigin(0).setScrollFactor(0).setDepth(51);
     this.attackCooldownFill = this.scene.add
-      .rectangle(784, 24, 122, 11, 0x8fd7ff, 1)
+      .rectangle(768, 74, 126, 10, 0x8fd7ff, 1)
       .setOrigin(0)
       .setScrollFactor(0)
       .setDepth(52);
     this.scene.add
-      .text(784, 40, 'ATTACK', {
+      .text(768, 89, 'ATTACK', {
+        fontFamily: 'monospace',
+        fontSize: '11px',
+        color: '#dbe7ea',
+        stroke: '#05080a',
+        strokeThickness: 3,
+      })
+      .setScrollFactor(0)
+      .setDepth(52);
+
+    this.scene.add.rectangle(768, 110, 126, 10, 0x0b1114, 0.9).setOrigin(0).setScrollFactor(0).setDepth(51);
+    this.dashCooldownFill = this.scene.add
+      .rectangle(768, 110, 126, 10, 0x9df7ff, 1)
+      .setOrigin(0)
+      .setScrollFactor(0)
+      .setDepth(52);
+    this.scene.add
+      .text(768, 124, 'DASH', {
         fontFamily: 'monospace',
         fontSize: '11px',
         color: '#dbe7ea',
@@ -151,14 +184,14 @@ export class GameHud {
       .setDepth(52);
 
     if (this.hasSlashSkill) {
-      this.scene.add.rectangle(784, 66, 122, 11, 0x0b1114, 0.9).setOrigin(0).setScrollFactor(0).setDepth(51);
+      this.scene.add.rectangle(768, 146, 126, 10, 0x0b1114, 0.9).setOrigin(0).setScrollFactor(0).setDepth(51);
       this.slashCooldownFill = this.scene.add
-        .rectangle(784, 66, 122, 11, 0x74f7ff, 1)
+        .rectangle(768, 146, 126, 10, 0x74f7ff, 1)
         .setOrigin(0)
         .setScrollFactor(0)
         .setDepth(52);
       this.scene.add
-        .text(784, 82, 'SLASH K', {
+        .text(768, 160, 'SLASH', {
           fontFamily: 'monospace',
           fontSize: '11px',
           color: '#dbe7ea',
@@ -180,13 +213,19 @@ export class GameHud {
 
   updateAttackCooldown(progress: number) {
     if (this.attackCooldownFill) {
-      this.attackCooldownFill.width = 122 * progress;
+      this.attackCooldownFill.width = 126 * progress;
+    }
+  }
+
+  updateDashCooldown(progress: number) {
+    if (this.dashCooldownFill) {
+      this.dashCooldownFill.width = 126 * progress;
     }
   }
 
   updateSlashCooldown(progress: number) {
     if (this.slashCooldownFill) {
-      this.slashCooldownFill.width = 122 * progress;
+      this.slashCooldownFill.width = 126 * progress;
     }
   }
 
@@ -197,7 +236,14 @@ export class GameHud {
     this.showWaveIntro(waveIndex, waveName);
   }
 
-  showEndScreen(title: string, color: string, score: number, footer = 'Press R to restart') {
+  showEndScreen(
+    title: string,
+    color: string,
+    score: number,
+    footer = 'Press R to restart',
+    rewardText = '',
+    endButtons: EndScreenAction[] = [],
+  ) {
     if (!this.endOverlay) {
       this.endOverlay = this.scene.add
         .rectangle(0, 0, 960, 540, 0x05070a, 0)
@@ -206,23 +252,137 @@ export class GameHud {
         .setDepth(59);
     }
 
+    this.endActions?.destroy(true);
+    this.endActions = undefined;
+
     this.scene.tweens.add({
       targets: this.endOverlay,
-      alpha: 0.58,
+      alpha: 0.72,
       duration: 260,
     });
-    this.messageText
-      ?.setText(`${title}\nScore: ${score}\n${footer}`)
-      .setColor(color)
+
+    this.messageText?.setText('').setAlpha(0);
+
+    const isVictory = title === 'VICTORY';
+    const panelWidth = endButtons.length >= 3 ? 560 : 470;
+    const panelHeight = rewardText ? 286 : 258;
+    const panelFill = 0x061015;
+    const accent = 0x8fd7ff;
+    const titleColor = isVictory ? '#d9ffcc' : color;
+    const actions: Phaser.GameObjects.GameObject[] = [
+      this.scene.add.rectangle(0, 10, panelWidth, panelHeight, 0x020507, 0.62),
+      this.scene.add
+        .rectangle(0, 0, panelWidth, panelHeight, panelFill, 0.9)
+        .setStrokeStyle(3, accent, 0.5),
+      this.scene.add.rectangle(0, -panelHeight / 2 + 21, panelWidth - 62, 3, accent, 0.62),
+      this.scene.add.rectangle(0, panelHeight / 2 - 42, panelWidth - 62, 2, 0xdff4ff, 0.16),
+      this.scene.add
+        .text(0, -62, title, {
+          fontFamily: 'monospace',
+          fontSize: '40px',
+          color: titleColor,
+          stroke: '#05080a',
+          strokeThickness: 9,
+        })
+        .setOrigin(0.5),
+      this.scene.add
+        .text(0, -14, `SCORE  ${score}`, {
+          fontFamily: 'monospace',
+          fontSize: '24px',
+          color: '#eef8ff',
+          stroke: '#05080a',
+          strokeThickness: 6,
+        })
+        .setOrigin(0.5),
+      this.scene.add
+        .text(0, 28, footer.toUpperCase(), {
+          fontFamily: 'monospace',
+          fontSize: '14px',
+          color: '#b7c9cf',
+          stroke: '#05080a',
+          strokeThickness: 4,
+        })
+        .setOrigin(0.5),
+    ];
+
+    if (rewardText) {
+      actions.push(
+        this.scene.add
+          .rectangle(0, 54, 368, 34, 0x0c252b, 0.86)
+          .setStrokeStyle(1, 0xbff4ff, 0.48),
+        this.scene.add
+          .text(0, 54, rewardText.toUpperCase(), {
+            fontFamily: 'monospace',
+            fontSize: '14px',
+            color: '#bff4ff',
+            stroke: '#05080a',
+            strokeThickness: 4,
+          })
+          .setOrigin(0.5),
+      );
+    }
+
+    const buttonGap = endButtons.length >= 3 ? 168 : 172;
+    const startX = -((endButtons.length - 1) * buttonGap) / 2;
+
+    for (const [index, button] of endButtons.entries()) {
+      actions.push(
+        this.createEndButton(
+          startX + index * buttonGap,
+          rewardText ? 106 : 86,
+          button.label,
+          button.onClick,
+          Boolean(button.primary),
+        ),
+      );
+    }
+
+    this.endActions = this.scene.add
+      .container(480, 288, actions)
+      .setScrollFactor(0)
+      .setDepth(78)
       .setAlpha(0)
-      .setScale(0.92);
+      .setScale(0.94);
     this.scene.tweens.add({
-      targets: this.messageText,
+      targets: this.endActions,
       alpha: 1,
       scale: 1,
-      duration: 260,
+      y: 278,
+      duration: 280,
       ease: 'Back.easeOut',
     });
+  }
+
+  private createEndButton(x: number, y: number, label: string, onClick: () => void, primary: boolean) {
+    const width = 154;
+    const shadow = this.scene.add.rectangle(0, 7, width, 48, 0x020709, 0.62);
+    const panel = this.scene.add
+      .rectangle(0, 0, width, 48, primary ? 0xbff4ff : 0x14262c, primary ? 0.96 : 0.92)
+      .setStrokeStyle(2, primary ? 0xffffff : 0xbff4ff, primary ? 0.86 : 0.56)
+      .setInteractive({ useHandCursor: true });
+    const topLine = this.scene.add.rectangle(0, -16, width - 24, 2, 0xffffff, primary ? 0.42 : 0.18);
+    const text = this.scene.add
+      .text(0, 0, label, {
+        fontFamily: 'monospace',
+        fontSize: label.length > 6 ? '17px' : '21px',
+        color: primary ? '#061115' : '#eef8ff',
+        stroke: primary ? '#eaffff' : '#05080a',
+        strokeThickness: primary ? 2 : 5,
+      })
+      .setOrigin(0.5);
+    const button = this.scene.add.container(x, y, [shadow, panel, topLine, text]).setScrollFactor(0);
+
+    panel.on('pointerdown', onClick);
+    panel.on('pointerover', () => {
+      panel.setFillStyle(primary ? 0xffffff : 0x1d3b44, 1);
+      button.setScale(1.04);
+    });
+    panel.on('pointerout', () => {
+      panel.setFillStyle(primary ? 0xbff4ff : 0x14262c, primary ? 0.96 : 0.92);
+      button.setScale(1);
+    });
+
+    return button;
   }
 
   private showSkillUnlockBanner() {

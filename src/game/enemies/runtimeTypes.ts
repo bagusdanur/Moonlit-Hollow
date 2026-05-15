@@ -1,0 +1,35 @@
+import type Phaser from 'phaser';
+import type { BoarChargeState } from '../boarBehavior';
+import type { EnemyKind } from './types';
+
+export type RuntimeEnemy = {
+  kind: EnemyKind;
+  sprite: Phaser.GameObjects.Sprite;
+  hpBar: Phaser.GameObjects.Graphics;
+  hp: number;
+  maxHp: number;
+  score: number;
+  lastAttackAt: number;
+  spawnGraceUntil: number;
+  stunnedUntil: number;
+  attackingUntil: number;
+  attackStartedAt: number;
+  attackStartX: number;
+  attackStartY: number;
+  attackTargetX: number;
+  attackTargetY: number;
+  attackHitAt: number;
+  attackResolved: boolean;
+  attackDirection: 1 | -1;
+  nextSpecialAt: number;
+  specialCastingUntil: number;
+  lastHitAttackId: number;
+  chargeState: BoarChargeState;
+  chargeDirection: 1 | -1;
+  chargeUntil: number;
+  nextChargeAt: number;
+  introUntil: number;
+  alive: boolean;
+  facing: 1 | -1;
+  isBoss: boolean;
+};

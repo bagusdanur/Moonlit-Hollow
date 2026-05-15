@@ -5,20 +5,24 @@ import {
   GROUND_Y,
   HURT_COOLDOWN,
   PLAYER_MAX_HP,
+  ATTACK_REACH,
   WORLD_HEIGHT,
   WORLD_LEFT,
   WORLD_WIDTH,
 } from '../game/config';
 import { EnemyWaveManager } from '../game/EnemyWaveManager';
+import { toggleFullscreen } from '../game/fullscreen';
 import { GameHud } from '../game/GameHud';
-import { PlayerController } from '../game/PlayerController';
+import { PlayerController, type TouchPlayerInput } from '../game/PlayerController';
 import { SlashSkill } from '../game/SlashSkill';
-import { getLevelById } from '../levels';
+import { getLevelById, LEVELS } from '../levels';
 import { completeLevel } from '../levels/progress';
 import type { LevelConfig } from '../levels/types';
 
 type CursorKeys = Phaser.Types.Input.Keyboard.CursorKeys;
-type GameKeys = Record<'W' | 'A' | 'D' | 'J' | 'K' | 'X' | 'R' | 'ESC', Phaser.Input.Keyboard.Key>;
+type GameKeys = Record<'W' | 'A' | 'D' | 'J' | 'K' | 'X' | 'R' | 'ESC' | 'SHIFT' | 'H', Phaser.Input.Keyboard.Key>;
+type TouchAction = 'left' | 'right' | 'jump' | 'attack' | 'dash' | 'skill' | 'pause' | 'restart' | 'fullscreen';
+type TouchButtonStyle = 'action' | 'utility';
 
 export class GameScene extends Phaser.Scene {
   private currentLevelId = 'level-1-forest';
@@ -38,6 +42,18 @@ export class GameScene extends Phaser.Scene {
   private pauseOverlay?: Phaser.GameObjects.Container;
   private isPausedGame = false;
   private lastAttackSoundId = 0;
+  private touchInput: TouchPlayerInput = {
+    left: false,
+    right: false,
+    jumpPressed: false,
+    attackPressed: false,
+    dashPressed: false,
+  };
+  private touchSkillPressed = false;
+  private movementPointers: Partial<Record<'left' | 'right', number>> = {};
+  private showTouchControls = false;
+  private debugHitboxes = false;
+  private debugGraphics?: Phaser.GameObjects.Graphics;
 
   constructor() {
     super('GameScene');
@@ -59,7 +75,7 @@ export class GameScene extends Phaser.Scene {
     createGameAnimations(this);
 
     this.cursors = this.input.keyboard?.createCursorKeys();
-    this.keys = this.input.keyboard?.addKeys('W,A,D,J,K,X,R,ESC') as GameKeys;
+    this.keys = this.input.keyboard?.addKeys('W,A,D,J,K,X,R,ESC,SHIFT,H') as GameKeys;
     this.player = new PlayerController(this, this.platforms!);
     this.enemies = new EnemyWaveManager(this, this.player, this.level, {
       onEnemyKilled: (points) => this.addScore(points),
@@ -79,6 +95,7 @@ export class GameScene extends Phaser.Scene {
 
     this.createCamera();
     this.createHud();
+    this.createTouchControls();
     this.createPauseMenu();
     this.enemies.start();
   }
@@ -91,6 +108,10 @@ export class GameScene extends Phaser.Scene {
     if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) {
       this.togglePause();
       return;
+    }
+
+    if (Phaser.Input.Keyboard.JustDown(this.keys.H)) {
+      this.toggleDebugHitboxes();
     }
 
     if (this.isPausedGame) {
@@ -107,10 +128,11 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    this.player.update(time, this.cursors, this.keys);
-    if (Phaser.Input.Keyboard.JustDown(this.keys.K) && this.isSlashSkillUnlocked()) {
+    this.player.update(time, this.cursors, this.keys, this.touchInput);
+    if ((Phaser.Input.Keyboard.JustDown(this.keys.K) || this.touchSkillPressed) && this.isSlashSkillUnlocked()) {
       this.slashSkill?.tryCast(time);
     }
+    this.consumeTouchPresses();
     this.playAttackSound();
 
     if (this.player.hasActiveAttackHitbox(time)) {
@@ -118,8 +140,10 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.enemies.update(time, delta / 1000);
+    this.drawDebugHitboxes(time);
     this.slashSkill?.update(delta / 1000);
     this.updateAttackCooldown(time);
+    this.updateDashCooldown(time);
     this.updateSlashCooldown(time);
   }
 
@@ -161,13 +185,14 @@ export class GameScene extends Phaser.Scene {
     this.hud = new GameHud(this, {
       level: this.level,
       hasSlashSkill: this.isSlashSkillUnlocked(),
+      showKeyboardHints: !this.showTouchControls,
     });
     this.hud.create();
     this.updateHud();
   }
 
   private damagePlayer(direction: 1 | -1, time: number, damage = 1) {
-    if (!this.player || time - this.lastHurtAt < HURT_COOLDOWN) {
+    if (!this.player || this.player.isInvulnerable(time) || time - this.lastHurtAt < HURT_COOLDOWN) {
       return;
     }
 
@@ -181,7 +206,7 @@ export class GameScene extends Phaser.Scene {
     if (this.hp <= 0) {
       this.isDead = true;
       this.player.die();
-      this.showEndScreen('YOU DIED', '#ffdfdf');
+      this.showEndScreen('YOU DIED', '#ffdfdf', 'Tap RETRY or press R');
     }
   }
 
@@ -198,10 +223,7 @@ export class GameScene extends Phaser.Scene {
     this.isWon = true;
     completeLevel(this.level.id);
     this.player?.body.setVelocity(0, 0);
-    this.showEndScreen('VICTORY', '#d9ffcc', 'Returning to level select...');
-    this.time.delayedCall(1600, () => {
-      this.scene.start('LevelSelect');
-    });
+    this.showEndScreen('VICTORY', '#d9ffcc', 'Level complete');
   }
 
   private updateHud() {
@@ -209,6 +231,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private resetState() {
+    this.showTouchControls = !this.sys.game.device.os.desktop;
     this.hp = PLAYER_MAX_HP;
     this.score = 0;
     this.lastHurtAt = -HURT_COOLDOWN;
@@ -224,6 +247,297 @@ export class GameScene extends Phaser.Scene {
     this.pauseOverlay = undefined;
     this.isPausedGame = false;
     this.lastAttackSoundId = 0;
+    this.resetTouchInput();
+    this.debugHitboxes = false;
+    this.debugGraphics?.destroy();
+    this.debugGraphics = undefined;
+  }
+
+  private createTouchControls() {
+    if (!this.showTouchControls) {
+      return;
+    }
+
+    const controls: Phaser.GameObjects.GameObject[] = [];
+
+    controls.push(this.createMovePad(134, 456));
+    controls.push(this.createTouchButton(742, 486, 78, 78, 'JUMP', 'jump', 'action'));
+    controls.push(this.createTouchButton(846, 446, 112, 112, 'ATK', 'attack', 'action'));
+    controls.push(this.createTouchButton(754, 390, 72, 72, 'DASH', 'dash', 'action'));
+
+    if (this.isSlashSkillUnlocked()) {
+      controls.push(this.createTouchButton(842, 346, 72, 72, 'SKL', 'skill', 'action'));
+    }
+
+    controls.push(this.createTouchButton(778, 34, 58, 40, 'FULL', 'fullscreen', 'utility'));
+    controls.push(this.createTouchButton(850, 34, 48, 40, 'II', 'pause', 'utility'));
+    controls.push(this.createTouchButton(916, 34, 48, 40, 'R', 'restart', 'utility'));
+
+    this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => this.releaseTouchPointer(pointer.id));
+    this.input.on('gameout', () => this.resetTouchInput());
+
+    this.add.container(0, 0, controls).setDepth(70).setScrollFactor(0);
+  }
+
+  private createMovePad(x: number, y: number) {
+    const width = 202;
+    const height = 92;
+    const base = this.add.graphics();
+    const leftHighlight = this.add.graphics().setVisible(false);
+    const rightHighlight = this.add.graphics().setVisible(false);
+
+    this.drawTouchButton(base, width, height, 0x071821, 0.42, 0xdff4ff, 0.5, false, 22);
+    this.drawMovePadHighlight(leftHighlight, -width / 4, height);
+    this.drawMovePadHighlight(rightHighlight, width / 4, height);
+
+    const divider = this.add.rectangle(0, 0, 2, 48, 0xdff4ff, 0.2);
+    const leftText = this.add
+      .text(-50, 0, '<', {
+        fontFamily: 'monospace',
+        fontSize: '40px',
+        color: '#f3fbff',
+        stroke: '#020709',
+        strokeThickness: 6,
+      })
+      .setOrigin(0.5);
+    const rightText = this.add
+      .text(50, 0, '>', {
+        fontFamily: 'monospace',
+        fontSize: '40px',
+        color: '#f3fbff',
+        stroke: '#020709',
+        strokeThickness: 6,
+      })
+      .setOrigin(0.5);
+    const leftZone = this.add
+      .zone(-width / 4, 0, width / 2 + 20, height + 28)
+      .setInteractive({ useHandCursor: true });
+    const rightZone = this.add
+      .zone(width / 4, 0, width / 2 + 20, height + 28)
+      .setInteractive({ useHandCursor: true });
+    const pad = this.add
+      .container(x, y, [base, leftHighlight, rightHighlight, divider, leftText, rightText, leftZone, rightZone])
+      .setScrollFactor(0)
+      .setAlpha(0.82);
+
+    const press = (action: 'left' | 'right', pointer: Phaser.Input.Pointer) => {
+      this.pressTouchAction(action, pointer.id);
+      leftHighlight.setVisible(action === 'left');
+      rightHighlight.setVisible(action === 'right');
+      pad.setAlpha(1);
+    };
+    const release = (action: 'left' | 'right', pointer: Phaser.Input.Pointer) => {
+      this.releaseTouchAction(action, pointer.id);
+      leftHighlight.setVisible(false);
+      rightHighlight.setVisible(false);
+      pad.setAlpha(0.82);
+    };
+
+    leftZone.on('pointerdown', (pointer: Phaser.Input.Pointer) => press('left', pointer));
+    rightZone.on('pointerdown', (pointer: Phaser.Input.Pointer) => press('right', pointer));
+    leftZone.on('pointerup', (pointer: Phaser.Input.Pointer) => release('left', pointer));
+    rightZone.on('pointerup', (pointer: Phaser.Input.Pointer) => release('right', pointer));
+    leftZone.on('pointerupoutside', (pointer: Phaser.Input.Pointer) => release('left', pointer));
+    rightZone.on('pointerupoutside', (pointer: Phaser.Input.Pointer) => release('right', pointer));
+
+    return pad;
+  }
+
+  private createTouchButton(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    label: string,
+    action: TouchAction,
+    style: TouchButtonStyle,
+  ) {
+    const isCircle = style === 'action';
+    const color = style === 'action' ? 0x10323a : 0x071115;
+    const stroke = style === 'action' ? 0x9df7ff : 0xdff4ff;
+    const alpha = style === 'utility' ? 0.64 : 0.52;
+    const hitWidth = width + (style === 'utility' ? 14 : 24);
+    const hitHeight = height + (style === 'utility' ? 14 : 24);
+    const panel = this.add.graphics();
+
+    this.drawTouchButton(panel, width, height, color, alpha, stroke, 0.68, isCircle);
+    panel.setInteractive(
+      isCircle
+        ? new Phaser.Geom.Circle(0, 0, Math.max(hitWidth, hitHeight) / 2)
+        : new Phaser.Geom.Rectangle(-hitWidth / 2, -hitHeight / 2, hitWidth, hitHeight),
+      isCircle ? Phaser.Geom.Circle.Contains : Phaser.Geom.Rectangle.Contains,
+    );
+
+    const shine = this.add.graphics();
+    this.drawTouchButton(shine, width - 12, height - 12, 0xffffff, 0.06, 0xffffff, 0.16, isCircle);
+    const text = this.add
+      .text(0, 0, label, {
+        fontFamily: 'monospace',
+        fontSize: style === 'utility' ? '12px' : label.length > 1 ? '14px' : '34px',
+        color: '#f3fbff',
+        stroke: '#020709',
+        strokeThickness: 5,
+      })
+      .setOrigin(0.5);
+    const button = this.add.container(x, y, [panel, shine, text]).setScrollFactor(0).setAlpha(0.88);
+    const release = (pointer: Phaser.Input.Pointer) => this.releaseTouchAction(action, pointer.id);
+
+    panel.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      this.pressTouchAction(action, pointer.id);
+      panel.clear();
+      this.drawTouchButton(panel, width, height, 0xbff4ff, 0.34, 0xffffff, 0.88, isCircle);
+      button.setScale(0.96);
+      button.setAlpha(1);
+    });
+    panel.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+      release(pointer);
+      panel.clear();
+      this.drawTouchButton(panel, width, height, color, alpha, stroke, 0.68, isCircle);
+      button.setScale(1);
+      button.setAlpha(0.88);
+    });
+    panel.on('pointerupoutside', (pointer: Phaser.Input.Pointer) => {
+      release(pointer);
+      panel.clear();
+      this.drawTouchButton(panel, width, height, color, alpha, stroke, 0.68, isCircle);
+      button.setScale(1);
+      button.setAlpha(0.88);
+    });
+    panel.on('pointerout', () => {
+      panel.clear();
+      this.drawTouchButton(panel, width, height, color, alpha, stroke, 0.68, isCircle);
+      button.setScale(1);
+      button.setAlpha(0.88);
+    });
+
+    return button;
+  }
+
+  private drawTouchButton(
+    target: Phaser.GameObjects.Graphics,
+    width: number,
+    height: number,
+    fill: number,
+    fillAlpha: number,
+    stroke: number,
+    strokeAlpha: number,
+    isCircle: boolean,
+    radius = 14,
+  ) {
+    target.fillStyle(fill, fillAlpha);
+    target.lineStyle(2, stroke, strokeAlpha);
+
+    if (isCircle) {
+      const radius = Math.min(width, height) / 2;
+      target.fillCircle(0, 0, radius);
+      target.strokeCircle(0, 0, radius);
+      return;
+    }
+
+    target.fillRoundedRect(-width / 2, -height / 2, width, height, radius);
+    target.strokeRoundedRect(-width / 2, -height / 2, width, height, radius);
+  }
+
+  private drawMovePadHighlight(target: Phaser.GameObjects.Graphics, x: number, height: number) {
+    target.fillStyle(0xbff4ff, 0.18);
+    target.lineStyle(2, 0xffffff, 0.38);
+    target.fillRoundedRect(x - 43, -height / 2 + 7, 86, height - 14, 18);
+    target.strokeRoundedRect(x - 43, -height / 2 + 7, 86, height - 14, 18);
+  }
+
+  private pressTouchAction(action: TouchAction, pointerId: number) {
+    if (action === 'left') {
+      this.touchInput.left = true;
+      this.touchInput.right = false;
+      this.movementPointers.left = pointerId;
+      this.movementPointers.right = undefined;
+      return;
+    }
+
+    if (action === 'right') {
+      this.touchInput.right = true;
+      this.touchInput.left = false;
+      this.movementPointers.right = pointerId;
+      this.movementPointers.left = undefined;
+      return;
+    }
+
+    if (action === 'jump') {
+      this.touchInput.jumpPressed = true;
+      return;
+    }
+
+    if (action === 'attack') {
+      this.touchInput.attackPressed = true;
+      return;
+    }
+
+    if (action === 'dash') {
+      this.touchInput.dashPressed = true;
+      return;
+    }
+
+    if (action === 'skill') {
+      this.touchSkillPressed = true;
+      return;
+    }
+
+    if (action === 'pause') {
+      this.togglePause();
+      return;
+    }
+
+    if (action === 'restart') {
+      this.scene.restart();
+      return;
+    }
+
+    if (action === 'fullscreen') {
+      toggleFullscreen(this);
+    }
+  }
+
+  private releaseTouchAction(action: TouchAction, pointerId: number) {
+    if (action === 'left' && this.movementPointers.left === pointerId) {
+      this.touchInput.left = false;
+      this.movementPointers.left = undefined;
+    }
+
+    if (action === 'right' && this.movementPointers.right === pointerId) {
+      this.touchInput.right = false;
+      this.movementPointers.right = undefined;
+    }
+  }
+
+  private releaseTouchPointer(pointerId: number) {
+    if (this.movementPointers.left === pointerId) {
+      this.touchInput.left = false;
+      this.movementPointers.left = undefined;
+    }
+
+    if (this.movementPointers.right === pointerId) {
+      this.touchInput.right = false;
+      this.movementPointers.right = undefined;
+    }
+  }
+
+  private consumeTouchPresses() {
+    this.touchInput.jumpPressed = false;
+    this.touchInput.attackPressed = false;
+    this.touchInput.dashPressed = false;
+    this.touchSkillPressed = false;
+  }
+
+  private resetTouchInput() {
+    this.touchInput = {
+      left: false,
+      right: false,
+      jumpPressed: false,
+      attackPressed: false,
+      dashPressed: false,
+    };
+    this.touchSkillPressed = false;
+    this.movementPointers = {};
   }
 
   private createPauseMenu() {
@@ -321,8 +635,42 @@ export class GameScene extends Phaser.Scene {
     this.hud?.updateAttackCooldown(this.player?.getAttackCooldownProgress(time) ?? 0);
   }
 
+  private updateDashCooldown(time: number) {
+    this.hud?.updateDashCooldown(this.player?.getDashCooldownProgress(time) ?? 0);
+  }
+
   private updateSlashCooldown(time: number) {
     this.hud?.updateSlashCooldown(this.slashSkill?.getCooldownProgress(time) ?? 0);
+  }
+
+  private toggleDebugHitboxes() {
+    this.debugHitboxes = !this.debugHitboxes;
+    this.enemies?.setDebugEnabled(this.debugHitboxes);
+
+    if (!this.debugHitboxes) {
+      this.debugGraphics?.clear();
+    }
+  }
+
+  private drawDebugHitboxes(time: number) {
+    if (!this.debugHitboxes || !this.player) {
+      return;
+    }
+
+    if (!this.debugGraphics) {
+      this.debugGraphics = this.add.graphics().setDepth(96);
+    }
+
+    const x = this.player.body.x;
+    const y = this.player.body.y - 62;
+    const direction = this.player.facing;
+    const active = this.player.hasActiveAttackHitbox(time);
+
+    this.debugGraphics.clear();
+    this.debugGraphics.lineStyle(2, active ? 0x72ff9f : 0xffdf6e, 0.88);
+    this.debugGraphics.fillStyle(active ? 0x72ff9f : 0xffdf6e, 0.12);
+    this.debugGraphics.fillRect(direction === 1 ? x : x - ATTACK_REACH, y - 37, ATTACK_REACH, 74);
+    this.debugGraphics.strokeRect(direction === 1 ? x : x - ATTACK_REACH, y - 37, ATTACK_REACH, 74);
   }
 
   private isSlashSkillUnlocked() {
@@ -371,7 +719,34 @@ export class GameScene extends Phaser.Scene {
 
   private showEndScreen(title: string, color: string, footer = 'Press R to restart') {
     this.saveBestScore();
-    this.hud?.showEndScreen(title, color, this.score, footer);
+    const showRetry = title !== 'VICTORY';
+    const nextLevel = this.getNextLevelId();
+
+    this.hud?.showEndScreen(
+      title,
+      color,
+      this.score,
+      footer,
+      title === 'VICTORY' && this.level.id === 'level-1-forest' ? 'New skill unlocked: Moon Slash' : '',
+      showRetry
+        ? [
+            { label: 'RETRY', primary: true, onClick: () => this.scene.restart() },
+            { label: 'MENU', onClick: () => this.scene.start('MainMenu') },
+          ]
+        : [
+            ...(nextLevel
+              ? [{ label: 'CONTINUE', primary: true, onClick: () => this.scene.start('LoadingScene', { levelId: nextLevel }) }]
+              : []),
+            { label: 'LEVELS', primary: !nextLevel, onClick: () => this.scene.start('LevelSelect') },
+            { label: 'MENU', onClick: () => this.scene.start('MainMenu') },
+          ],
+    );
+  }
+
+  private getNextLevelId() {
+    const currentIndex = LEVELS.findIndex((level) => level.id === this.level.id);
+
+    return currentIndex >= 0 ? LEVELS[currentIndex + 1]?.id : undefined;
   }
 
   private saveBestScore() {

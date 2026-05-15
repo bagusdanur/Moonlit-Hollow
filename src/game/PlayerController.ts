@@ -4,6 +4,10 @@ import {
   ATTACK_DURATION,
   ATTACK_ACTIVE_FROM,
   ATTACK_ACTIVE_TO,
+  DASH_COOLDOWN,
+  DASH_DURATION,
+  DASH_INVULNERABLE_DURATION,
+  DASH_SPEED,
   GROUND_Y,
   JUMP_SPEED,
   PLAYER_SPEED,
@@ -12,7 +16,14 @@ import {
 } from './config';
 
 type CursorKeys = Phaser.Types.Input.Keyboard.CursorKeys;
-type PlayerKeys = Record<'W' | 'A' | 'D' | 'J' | 'X' | 'R' | 'ESC', Phaser.Input.Keyboard.Key>;
+type PlayerKeys = Record<'W' | 'A' | 'D' | 'J' | 'X' | 'R' | 'ESC' | 'SHIFT', Phaser.Input.Keyboard.Key>;
+export type TouchPlayerInput = {
+  left: boolean;
+  right: boolean;
+  jumpPressed: boolean;
+  attackPressed: boolean;
+  dashPressed: boolean;
+};
 
 export class PlayerController {
   readonly body: Phaser.Physics.Arcade.Sprite;
@@ -26,6 +37,9 @@ export class PlayerController {
   private lastAttackAt = -ATTACK_COOLDOWN;
   private skillVisualUntil = 0;
   private hurtControlUntil = 0;
+  private dashUntil = 0;
+  private dashInvulnerableUntil = 0;
+  private lastDashAt = -DASH_COOLDOWN;
   private scene: Phaser.Scene;
 
   constructor(
@@ -38,7 +52,7 @@ export class PlayerController {
     this.body.setVisible(false);
     this.body.setCollideWorldBounds(false);
     this.body.setBounce(0, 0);
-    this.body.setMaxVelocity(PLAYER_SPEED, JUMP_SPEED * 1.25);
+    this.body.setMaxVelocity(DASH_SPEED, JUMP_SPEED * 1.25);
     this.body.body?.setSize(26, 52);
     this.body.body?.setOffset(0, 0);
 
@@ -52,17 +66,24 @@ export class PlayerController {
     scene.physics.add.collider(this.body, platforms);
   }
 
-  update(time: number, cursors: CursorKeys, keys: PlayerKeys) {
+  update(time: number, cursors: CursorKeys, keys: PlayerKeys, touchInput?: TouchPlayerInput) {
     const body = this.body.body as Phaser.Physics.Arcade.Body;
-    const left = cursors.left.isDown || keys.A.isDown;
-    const right = cursors.right.isDown || keys.D.isDown;
+    const left = cursors.left.isDown || keys.A.isDown || touchInput?.left;
+    const right = cursors.right.isDown || keys.D.isDown || touchInput?.right;
     const jump =
       Phaser.Input.Keyboard.JustDown(cursors.space) ||
       Phaser.Input.Keyboard.JustDown(cursors.up) ||
-      Phaser.Input.Keyboard.JustDown(keys.W);
-    const attack = Phaser.Input.Keyboard.JustDown(keys.J) || Phaser.Input.Keyboard.JustDown(keys.X);
+      Phaser.Input.Keyboard.JustDown(keys.W) ||
+      Boolean(touchInput?.jumpPressed);
+    const attack =
+      Phaser.Input.Keyboard.JustDown(keys.J) ||
+      Phaser.Input.Keyboard.JustDown(keys.X) ||
+      Boolean(touchInput?.attackPressed);
+    const dash =
+      Phaser.Input.Keyboard.JustDown(keys.SHIFT) ||
+      Boolean(touchInput?.dashPressed);
 
-    if (attack && time - this.lastAttackAt >= ATTACK_COOLDOWN) {
+    if (attack && !this.isAttacking && time - this.lastAttackAt >= ATTACK_COOLDOWN) {
       this.isAttacking = true;
       this.attackStartedAt = time;
       this.lastAttackAt = time;
@@ -75,8 +96,21 @@ export class PlayerController {
     }
 
     const canControl = time >= this.hurtControlUntil;
+    let isDashing = time < this.dashUntil;
+    const dashDirection = left ? -1 : right ? 1 : this.facing;
 
-    if (left && canControl) {
+    if (dash && canControl && time - this.lastDashAt >= DASH_COOLDOWN) {
+      this.facing = dashDirection;
+      this.dashUntil = time + DASH_DURATION;
+      this.dashInvulnerableUntil = time + DASH_INVULNERABLE_DURATION;
+      this.lastDashAt = time;
+      isDashing = true;
+      this.createDashAfterimage();
+    }
+
+    if (time < this.dashUntil) {
+      this.body.setVelocityX(this.facing * DASH_SPEED);
+    } else if (left && canControl) {
       this.facing = -1;
       this.body.setVelocityX(-PLAYER_SPEED);
     } else if (right && canControl) {
@@ -86,7 +120,7 @@ export class PlayerController {
       this.body.setVelocityX(0);
     }
 
-    if (jump && body.blocked.down && canControl) {
+    if (jump && body.blocked.down && canControl && !isDashing) {
       this.body.setVelocityY(-JUMP_SPEED);
     }
 
@@ -94,6 +128,8 @@ export class PlayerController {
 
     if (this.isAttacking || time < this.skillVisualUntil) {
       this.play('player-attack');
+    } else if (isDashing) {
+      this.play('player-run');
     } else if (!body.blocked.down) {
       this.play('player-jump');
     } else if (canControl && (left || right)) {
@@ -111,6 +147,14 @@ export class PlayerController {
 
   getAttackCooldownProgress(time: number) {
     return Phaser.Math.Clamp((time - this.lastAttackAt) / ATTACK_COOLDOWN, 0, 1);
+  }
+
+  getDashCooldownProgress(time: number) {
+    return Phaser.Math.Clamp((time - this.lastDashAt) / DASH_COOLDOWN, 0, 1);
+  }
+
+  isInvulnerable(time = this.scene.time.now) {
+    return time < this.dashInvulnerableUntil;
   }
 
   private keepInsideMap() {
@@ -134,6 +178,10 @@ export class PlayerController {
   }
 
   hurt(direction: 1 | -1, time = this.scene.time.now) {
+    if (this.isInvulnerable(time)) {
+      return;
+    }
+
     void direction;
     this.visual.setTint(0xff5f5f);
     this.hurtControlUntil = time + 30;
@@ -157,5 +205,31 @@ export class PlayerController {
     }
 
     this.visual.setFlipX(this.facing === -1);
+  }
+
+  private createDashAfterimage() {
+    this.visual.setTint(0xbff4ff);
+    this.scene.time.delayedCall(DASH_INVULNERABLE_DURATION + 20, () => this.visual.clearTint());
+
+    for (let i = 0; i < 3; i += 1) {
+      this.scene.time.delayedCall(i * 42, () => {
+        const ghost = this.scene.add
+          .sprite(this.visual.x - this.facing * (14 + i * 10), this.visual.y, this.visual.texture.key)
+          .setOrigin(0.5, 1)
+          .setScale(this.visual.scaleX, this.visual.scaleY)
+          .setFlipX(this.facing === -1)
+          .setAlpha(0.26)
+          .setTint(0x9df7ff)
+          .setDepth(9);
+
+        this.scene.tweens.add({
+          targets: ghost,
+          alpha: 0,
+          duration: 180,
+          ease: 'Quad.easeOut',
+          onComplete: () => ghost.destroy(),
+        });
+      });
+    }
   }
 }

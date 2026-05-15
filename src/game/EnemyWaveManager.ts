@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { BossPresentation } from './BossPresentation';
-import { updateBoarCharge, type BoarChargeState } from './boarBehavior';
+import { updateBoarCharge } from './boarBehavior';
 import {
   ENEMY_AGGRO_RANGE,
   ENEMY_ATTACK_COOLDOWN,
@@ -12,35 +12,18 @@ import {
   WORLD_RIGHT,
 } from './config';
 import type { EnemyKind, EnemySpawn, EnemyStats } from './enemies/types';
+import type { RuntimeEnemy } from './enemies/runtimeTypes';
+import {
+  createDefeatBurst,
+  createHitImpact,
+  createHitSpark,
+  createSpawnBurst,
+  createSpawnWarning,
+} from './enemies/enemyEffects';
+import { tryBossSpecial } from './enemies/bossSpell';
+import { EnemyDebugView } from './enemies/enemyDebug';
 import type { LevelConfig } from '../levels/types';
 import { PlayerController } from './PlayerController';
-
-type Enemy = {
-  kind: EnemyKind;
-  sprite: Phaser.GameObjects.Sprite;
-  hpBar: Phaser.GameObjects.Graphics;
-  hp: number;
-  maxHp: number;
-  score: number;
-  lastAttackAt: number;
-  spawnGraceUntil: number;
-  stunnedUntil: number;
-  attackingUntil: number;
-  attackHitAt: number;
-  attackResolved: boolean;
-  attackDirection: 1 | -1;
-  nextSpecialAt: number;
-  specialCastingUntil: number;
-  lastHitAttackId: number;
-  chargeState: BoarChargeState;
-  chargeDirection: 1 | -1;
-  chargeUntil: number;
-  nextChargeAt: number;
-  introUntil: number;
-  alive: boolean;
-  facing: 1 | -1;
-  isBoss: boolean;
-};
 
 type EnemyWaveCallbacks = {
   onEnemyKilled: (score: number) => void;
@@ -52,7 +35,7 @@ type EnemyWaveCallbacks = {
 };
 
 export class EnemyWaveManager {
-  private enemies: Enemy[] = [];
+  private enemies: RuntimeEnemy[] = [];
   private waveIndex = 0;
   private spawningWave = false;
   private won = false;
@@ -61,6 +44,7 @@ export class EnemyWaveManager {
   private level: LevelConfig;
   private callbacks: EnemyWaveCallbacks;
   private bossPresentation: BossPresentation;
+  private debugView: EnemyDebugView;
 
   constructor(
     scene: Phaser.Scene,
@@ -73,6 +57,7 @@ export class EnemyWaveManager {
     this.level = level;
     this.callbacks = callbacks;
     this.bossPresentation = new BossPresentation(scene);
+    this.debugView = new EnemyDebugView(scene);
   }
 
   start() {
@@ -85,6 +70,7 @@ export class EnemyWaveManager {
     }
 
     this.enemies.forEach((enemy) => this.updateEnemy(enemy, time, dt));
+    this.debugView.draw(this.enemies, (enemy) => this.getEnemyStats(enemy.kind));
   }
 
   attackFromPlayer(attackId: number) {
@@ -101,7 +87,7 @@ export class EnemyWaveManager {
       const dx = enemy.sprite.x - playerX;
       const dy = Math.abs(enemy.sprite.y - playerY);
       const inFront = facing === 1 ? dx >= -14 : dx <= 14;
-      const inRange = Math.abs(dx) <= ATTACK_REACH && dy <= 82;
+      const inRange = Math.abs(dx) <= ATTACK_REACH && dy <= 74;
 
       if (!inFront || !inRange) {
         return;
@@ -143,9 +129,14 @@ export class EnemyWaveManager {
     });
     this.enemies = [];
     this.bossPresentation.clear();
+    this.debugView.destroy();
   }
 
-  private updateEnemy(enemy: Enemy, time: number, dt: number) {
+  setDebugEnabled(enabled: boolean) {
+    this.debugView.setEnabled(enabled);
+  }
+
+  private updateEnemy(enemy: RuntimeEnemy, time: number, dt: number) {
     if (!enemy.alive) {
       return;
     }
@@ -197,11 +188,25 @@ export class EnemyWaveManager {
     } else if (isAttacking) {
       this.faceEnemy(enemy, direction);
       this.playEnemy(enemy, stats.attackAnim);
+      this.updateAttackLunge(enemy, time, stats);
       this.resolveEnemyAttack(enemy, time);
     } else if (isStunned && stats.hurtAnim) {
       this.faceEnemy(enemy, direction);
       this.playEnemy(enemy, stats.hurtAnim);
-    } else if (!isStunned && shouldChase && this.tryBossSpecial(enemy, time)) {
+    } else if (
+      !isStunned &&
+      shouldChase &&
+      tryBossSpecial({
+        scene: this.scene,
+        enemy,
+        stats,
+        player: this.player,
+        time,
+        playEnemy: (target, key) => this.playEnemy(target, key),
+        clearTint: (target) => this.applyBaseTint(target),
+        onPlayerHit: this.callbacks.onPlayerHit,
+      })
+    ) {
       this.faceEnemy(enemy, direction);
     } else if (!isStunned && shouldChase && absDx > attackRange) {
       enemy.sprite.x += direction * stats.speed * dt;
@@ -216,24 +221,31 @@ export class EnemyWaveManager {
       }
     }
 
-    enemy.sprite.y = GROUND_Y + stats.yOffset;
+    if (!((enemy.kind === 'bat' || enemy.kind === 'bee') && isAttacking)) {
+      enemy.sprite.y = GROUND_Y + stats.yOffset;
+    }
     this.updateEnemyHpBar(enemy);
   }
 
-  private attackPlayer(enemy: Enemy, time: number, direction: 1 | -1) {
+  private attackPlayer(enemy: RuntimeEnemy, time: number, direction: 1 | -1) {
     if (time - enemy.lastAttackAt < ENEMY_ATTACK_COOLDOWN) {
       return;
     }
 
     const stats = this.getEnemyStats(enemy.kind);
     const closeEnough = Math.abs(enemy.sprite.x - this.player.body.x) <= stats.attackRange;
-    const sameLevel = Math.abs(enemy.sprite.y - this.player.body.y) <= 92;
+    const sameLevel = Math.abs(enemy.sprite.y - this.player.body.y) <= (stats.attackHeight ?? 92);
 
     if (!closeEnough || !sameLevel) {
       return;
     }
 
     enemy.lastAttackAt = time;
+    enemy.attackStartedAt = time;
+    enemy.attackStartX = enemy.sprite.x;
+    enemy.attackStartY = enemy.sprite.y;
+    enemy.attackTargetX = this.player.body.x - direction * 18;
+    enemy.attackTargetY = this.player.body.y - 34;
     enemy.attackingUntil = time + stats.attackDuration;
     enemy.attackHitAt = time + (stats.attackHitDelay ?? 140);
     enemy.attackResolved = false;
@@ -254,14 +266,14 @@ export class EnemyWaveManager {
     this.scene.time.delayedCall(120, () => this.applyBaseTint(enemy));
   }
 
-  private resolveEnemyAttack(enemy: Enemy, time: number) {
+  private resolveEnemyAttack(enemy: RuntimeEnemy, time: number) {
     if (enemy.attackResolved || time < enemy.attackHitAt) {
       return;
     }
 
     const stats = this.getEnemyStats(enemy.kind);
     const closeEnough = Math.abs(enemy.sprite.x - this.player.body.x) <= stats.attackRange;
-    const sameLevel = Math.abs(enemy.sprite.y - this.player.body.y) <= 92;
+    const sameLevel = Math.abs(enemy.sprite.y - this.player.body.y) <= (stats.attackHeight ?? 92);
 
     enemy.attackResolved = true;
 
@@ -272,13 +284,37 @@ export class EnemyWaveManager {
     this.callbacks.onPlayerHit(enemy.attackDirection, time, stats.damage ?? 1);
   }
 
-  private damageEnemy(enemy: Enemy, hitId: number, damage: number, direction: 1 | -1) {
+  private updateAttackLunge(enemy: RuntimeEnemy, time: number, stats: EnemyStats) {
+    if (enemy.kind !== 'bat' && enemy.kind !== 'bee') {
+      return;
+    }
+
+    const progress = Phaser.Math.Clamp((time - enemy.attackStartedAt) / stats.attackDuration, 0, 1);
+    const lunge = Math.sin(progress * Math.PI);
+
+    enemy.sprite.x = Phaser.Math.Linear(enemy.attackStartX, enemy.attackTargetX, lunge);
+    enemy.sprite.y = Phaser.Math.Linear(enemy.attackStartY, enemy.attackTargetY, lunge);
+  }
+
+  private damageEnemy(enemy: RuntimeEnemy, hitId: number, damage: number, direction: 1 | -1) {
     enemy.lastHitAttackId = hitId;
     enemy.hp -= damage;
-    enemy.stunnedUntil = this.scene.time.now + 260;
+    if (damage > 1) {
+      enemy.stunnedUntil = this.scene.time.now + 220;
+    }
     enemy.sprite.setTint(0xffffff);
-    this.createHitSpark(enemy.sprite.x, enemy.sprite.y - 28, direction);
+    this.scene.cameras.main.shake(55, enemy.isBoss ? 0.0018 : 0.001);
+    createHitSpark(this.scene, enemy.sprite.x, enemy.sprite.y - 28, direction);
+    createHitImpact(this.scene, enemy.sprite.x, enemy.sprite.y - 34, enemy.isBoss);
     this.callbacks.onEnemyDamaged(enemy.sprite.x, enemy.sprite.y - 48, damage);
+    this.scene.tweens.add({
+      targets: enemy.sprite,
+      scaleX: enemy.sprite.scaleX * 1.04,
+      scaleY: enemy.sprite.scaleY * 1.04,
+      duration: 60,
+      yoyo: true,
+      ease: 'Sine.easeOut',
+    });
     this.scene.time.delayedCall(90, () => this.applyBaseTint(enemy));
     this.updateEnemyHpBar(enemy);
 
@@ -287,11 +323,12 @@ export class EnemyWaveManager {
     }
   }
 
-  private killEnemy(enemy: Enemy) {
+  private killEnemy(enemy: RuntimeEnemy) {
     enemy.alive = false;
     enemy.hpBar.destroy();
     this.callbacks.onEnemyKilled(enemy.score);
     enemy.sprite.setTint(0x4a5360);
+    createDefeatBurst(this.scene, enemy.sprite.x, enemy.sprite.y - 36, enemy.isBoss);
     const stats = this.getEnemyStats(enemy.kind);
 
     if (stats.deathAnim) {
@@ -343,6 +380,10 @@ export class EnemyWaveManager {
     this.scene.time.delayedCall(delay, () => {
       const isBossWave = wave.length === 1 && wave[0].kind === 'deathBringer';
 
+      if (isBossWave) {
+        this.bossPresentation.createBossWarning('Bringer of Death');
+      }
+
       wave.forEach((spawn, index) => {
         const side = index % 2 === 0 ? -1 : 1;
         const x =
@@ -355,7 +396,7 @@ export class EnemyWaveManager {
 
         this.scene.time.delayedCall(spawnDelay, () => {
           if (!isBossWave) {
-            this.createSpawnWarning(x, spawn.kind);
+            createSpawnWarning(this.scene, x, spawn.kind, this.getEnemyStats(spawn.kind));
           }
         });
         this.scene.time.delayedCall(spawnDelay + (isBossWave ? 0 : warningLead), () => {
@@ -366,38 +407,6 @@ export class EnemyWaveManager {
           }
         });
       });
-    });
-  }
-
-  private createSpawnWarning(spawnX: number, kind: EnemyKind) {
-    const stats = this.getEnemyStats(kind);
-    const x = Phaser.Math.Clamp(spawnX, WORLD_LEFT + 52, WORLD_RIGHT - 52);
-    const y = GROUND_Y + stats.yOffset - 20;
-    const color = kind === 'bat' ? 0x9fe8ff : 0xf5d77d;
-    const glow = this.scene.add.circle(x, y, 26, color, 0.14).setDepth(7);
-    const ring = this.scene.add.circle(x, y, 26).setStrokeStyle(3, color, 0.72).setDepth(8);
-    const mark = this.scene.add
-      .text(x, y - 2, '!', {
-        fontFamily: 'monospace',
-        fontSize: '24px',
-        color: '#ffffff',
-        stroke: '#05080a',
-        strokeThickness: 5,
-      })
-      .setOrigin(0.5)
-      .setDepth(9);
-
-    this.scene.tweens.add({
-      targets: [glow, ring, mark],
-      scale: 1.28,
-      alpha: 0.2,
-      duration: 500,
-      ease: 'Sine.easeInOut',
-      onComplete: () => {
-        glow.destroy();
-        ring.destroy();
-        mark.destroy();
-      },
     });
   }
 
@@ -414,7 +423,7 @@ export class EnemyWaveManager {
 
     sprite.play(stats.idleAnim);
 
-    const enemy: Enemy = {
+    const enemy: RuntimeEnemy = {
       kind: spawn.kind,
       sprite,
       hpBar: this.scene.add.graphics().setDepth(20),
@@ -425,6 +434,11 @@ export class EnemyWaveManager {
       spawnGraceUntil: this.scene.time.now + stats.spawnGrace,
       stunnedUntil: 0,
       attackingUntil: 0,
+      attackStartedAt: 0,
+      attackStartX: 0,
+      attackStartY: 0,
+      attackTargetX: 0,
+      attackTargetY: 0,
       attackHitAt: 0,
       attackResolved: true,
       attackDirection: -1,
@@ -443,7 +457,7 @@ export class EnemyWaveManager {
 
     enemy.spawnGraceUntil = now + stats.spawnGrace + introDuration;
     this.applyBaseTint(enemy);
-    this.createSpawnBurst(enemy);
+    createSpawnBurst(this.scene, enemy);
     this.enemies.push(enemy);
     this.updateEnemyHpBar(enemy);
 
@@ -457,7 +471,7 @@ export class EnemyWaveManager {
     }
   }
 
-  private updateEnemyHpBar(enemy: Enemy) {
+  private updateEnemyHpBar(enemy: RuntimeEnemy) {
     if (!enemy.alive) {
       return;
     }
@@ -478,41 +492,21 @@ export class EnemyWaveManager {
     enemy.hpBar.fillRect(enemy.sprite.x - width / 2, enemy.sprite.y - stats.hpBarOffsetY, fill, 6);
   }
 
-  private faceEnemy(enemy: Enemy, direction: 1 | -1) {
+  private faceEnemy(enemy: RuntimeEnemy, direction: 1 | -1) {
     const stats = this.getEnemyStats(enemy.kind);
 
     enemy.facing = direction;
     enemy.sprite.setFlipX(stats.facesLeftByDefault ? direction > 0 : direction < 0);
   }
 
-  private playEnemy(enemy: Enemy, key: string) {
+  private playEnemy(enemy: RuntimeEnemy, key: string) {
     if (enemy.sprite.anims.currentAnim?.key !== key) {
       enemy.sprite.play(key, true);
     }
   }
 
-  private applyBaseTint(enemy: Enemy) {
+  private applyBaseTint(enemy: RuntimeEnemy) {
     enemy.sprite.clearTint();
-  }
-
-  private createSpawnBurst(enemy: Enemy) {
-    if (enemy.kind !== 'alphaBoar' && enemy.kind !== 'deathBringer') {
-      return;
-    }
-
-    const color = enemy.kind === 'deathBringer' ? 0x8d5cff : 0xff3855;
-    const ring = this.scene.add
-      .circle(enemy.sprite.x, enemy.sprite.y - 28, 18, color, 0.18)
-      .setDepth(8);
-
-    this.scene.tweens.add({
-      targets: ring,
-      scale: 3.2,
-      alpha: 0,
-      duration: 520,
-      ease: 'Quad.easeOut',
-      onComplete: () => ring.destroy(),
-    });
   }
 
   private isBossSpawn(spawn: EnemySpawn) {
@@ -531,94 +525,4 @@ export class EnemyWaveManager {
     return stats;
   }
 
-  private tryBossSpecial(enemy: Enemy, time: number) {
-    const stats = this.getEnemyStats(enemy.kind);
-    const distance = Math.abs(this.player.body.x - enemy.sprite.x);
-    const castRange = 280;
-
-    if (!enemy.isBoss || !stats.specialAnim || time < enemy.nextSpecialAt || distance > castRange) {
-      return false;
-    }
-
-    enemy.nextSpecialAt = time + 3300;
-    enemy.specialCastingUntil = time + 780;
-    enemy.stunnedUntil = Math.max(enemy.stunnedUntil, time + 780);
-    this.playEnemy(enemy, stats.castAnim ?? stats.idleAnim);
-    enemy.sprite.setTint(0xd7b4ff);
-    this.scene.time.delayedCall(520, () => this.castBossSpell(enemy, stats.specialAnim!));
-    this.scene.time.delayedCall(780, () => this.applyBaseTint(enemy));
-    return true;
-  }
-
-  private castBossSpell(enemy: Enemy, specialAnim: string) {
-    if (!enemy.alive) {
-      return;
-    }
-
-    const playerBody = this.player.body.body as Phaser.Physics.Arcade.Body;
-    const predictedX = this.player.body.x + playerBody.velocity.x * 0.3;
-    const targetX = Phaser.Math.Clamp(predictedX, WORLD_LEFT + 70, WORLD_RIGHT - 70);
-    const targetY = GROUND_Y + 2;
-    const warning = this.scene.add
-      .circle(targetX, targetY - 8, 58, 0x8e38ff, 0.24)
-      .setDepth(7);
-    const ring = this.scene.add
-      .circle(targetX, targetY - 8, 58)
-      .setStrokeStyle(4, 0xf0d8ff, 0.76)
-      .setDepth(8);
-
-    this.scene.tweens.add({
-      targets: [warning, ring],
-      scale: 1.18,
-      alpha: 0.1,
-      duration: 380,
-      yoyo: true,
-      ease: 'Sine.easeInOut',
-      onComplete: () => {
-        warning.destroy();
-        ring.destroy();
-        this.resolveBossSpell(targetX, targetY, specialAnim);
-      },
-    });
-  }
-
-  private resolveBossSpell(x: number, y: number, specialAnim: string) {
-    const spell = this.scene.add
-      .sprite(x, y, `${specialAnim}-1`)
-      .setOrigin(0.5, 1)
-      .setScale(3.5)
-      .setDepth(12)
-      .play(specialAnim);
-
-    this.scene.cameras.main.shake(110, 0.0022);
-    this.scene.time.delayedCall(45, () => {
-      const closeEnough = Math.abs(this.player.body.x - x) <= 78;
-      const sameLevel = Math.abs(this.player.body.y - y) <= 116;
-
-      if (closeEnough && sameLevel) {
-        const direction: 1 | -1 = this.player.body.x < x ? -1 : 1;
-        this.callbacks.onPlayerHit(direction, this.scene.time.now, 3.5);
-      }
-    });
-    spell.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => spell.destroy());
-  }
-
-  private createHitSpark(x: number, y: number, direction: 1 | -1) {
-    for (let i = 0; i < 5; i += 1) {
-      const spark = this.scene.add
-        .rectangle(x, y, 3, 3, 0xfff1a3, 1)
-        .setDepth(30)
-        .setRotation(Phaser.Math.FloatBetween(-0.7, 0.7));
-
-      this.scene.tweens.add({
-        targets: spark,
-        x: x + direction * Phaser.Math.Between(16, 34),
-        y: y + Phaser.Math.Between(-18, 10),
-        alpha: 0,
-        duration: 180,
-        ease: 'Quad.easeOut',
-        onComplete: () => spark.destroy(),
-      });
-    }
-  }
 }
